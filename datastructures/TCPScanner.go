@@ -9,6 +9,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/cheggaaa/pb/v3"
 	"go.uber.org/zap"
 )
 
@@ -52,6 +53,10 @@ func (t *TCPScanner) Scan() {
 		zap.S().Warnf("Provided a thread factor greater than current ulimit size, setting at MAX [%d] requests\n", t.Concurrency)
 	}
 	semaphore := make(chan struct{}, t.Concurrency)
+
+	// create and start new bar
+	bar := pb.Full.Start(getTotalPortCount(t.PortRange))
+
 	for _, ports := range t.PortRange {
 		for j := ports[0]; j < ports[1]; j++ {
 			wg.Add(1)
@@ -62,10 +67,13 @@ func (t *TCPScanner) Scan() {
 				}
 				func() { <-semaphore }()
 				wg.Done()
+				bar.Increment()
 			}(j)
 		}
 	}
 	wg.Wait()
+	bar.Finish()
+
 	zap.S().Infof("Open port: %+v\n", t.Headers)
 }
 
@@ -76,10 +84,9 @@ func (t *TCPScanner) IsOpen(port int) bool {
 
 	if tcpAddr, err = net.ResolveTCPAddr("tcp4", fmt.Sprintf("%s:%d", t.Host, port)); err != nil {
 		zap.S().Panic(err)
-		return false
 	}
 	if conn, err = net.DialTimeout("tcp", tcpAddr.String(), t.Timeout); err != nil {
-		if !strings.Contains(err.Error(), "connect: connection refused") {
+		if !strings.Contains(err.Error(), "connect: connection refused") && !strings.Contains(err.Error(), "i/o timeout") {
 			zap.S().Panic(err)
 		}
 		return false
@@ -94,7 +101,15 @@ func (t *TCPScanner) getHeaders(port int) []string {
 	var err error
 	var headers []string
 	if resp, err = http.Get(fmt.Sprintf("http://%s:%d", t.Host, port)); err != nil {
-		panic(err)
+		if strings.Contains(err.Error(), "http: server gave HTTP response to HTTPS client") {
+			if resp, err = http.Get(fmt.Sprintf("https://%s:%d", t.Host, port)); err != nil {
+				zap.S().Info(err)
+				return nil
+			}
+		} else {
+			zap.S().Info(err)
+			return nil
+		}
 	}
 	defer resp.Body.Close()
 
@@ -106,4 +121,12 @@ func (t *TCPScanner) getHeaders(port int) []string {
 		}
 	}
 	return headers
+}
+
+func getTotalPortCount(ports [][]int) int {
+	var count int
+	for _, ports := range ports {
+		count += (ports[1] - ports[0])
+	}
+	return count
 }

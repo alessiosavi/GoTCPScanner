@@ -78,8 +78,8 @@ func main() {
 	}
 
 	log.Infof("Starting scan target [%s] in port rage {%v}\n", tcpScanner.Host, tcpScanner.PortRange)
-	tcpScanner.SetTimeout(0)
-	tcpScanner.Concurrency = 8193
+	tcpScanner.SetTimeout(3000)
+	tcpScanner.Concurrency = 300
 
 	tcpScanner.Scan()
 }
