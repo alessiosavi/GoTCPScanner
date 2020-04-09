@@ -3,21 +3,26 @@ package TCPScanner
 import (
 	"fmt"
 	"net"
+	"net/http"
 	"strings"
 	"sync"
 	"syscall"
 	"time"
+
+	"go.uber.org/zap"
 )
 
 type TCPScanner struct {
 	Host        string
 	PortRange   [][]int
+	Headers     map[int][]string
 	Concurrency int
 	Timeout     time.Duration
 }
 
 func (t *TCPScanner) SetHost(host string) {
 	t.Host = host
+	t.Headers = make(map[int][]string)
 }
 
 func (t *TCPScanner) SetTimeout(millisecond int) {
@@ -31,11 +36,9 @@ func (t *TCPScanner) AddPortRange(startPort, stopPort int) {
 // GetUlimitValue return the current and max value for ulimit
 func getUlimitValue() (uint64, uint64) {
 	var rLimit syscall.Rlimit
-	err := syscall.Getrlimit(syscall.RLIMIT_NOFILE, &rLimit)
-	if err != nil {
-		fmt.Printf("Error Getting Rlimit: %s\n", err)
+	if err := syscall.Getrlimit(syscall.RLIMIT_NOFILE, &rLimit); err != nil {
+		panic(err)
 	}
-	fmt.Printf("Current Ulimit: %d\n", rLimit.Cur)
 	return rLimit.Cur, rLimit.Max
 }
 
@@ -46,7 +49,7 @@ func (t *TCPScanner) Scan() {
 	ulimitCurr, _ := getUlimitValue()
 	if uint64(t.Concurrency) >= ulimitCurr {
 		t.Concurrency = int(float64(ulimitCurr) * 0.7)
-		fmt.Printf("Provided a thread factor greater than current ulimit size, setting at MAX [%d] requests\n", t.Concurrency)
+		zap.S().Warnf("Provided a thread factor greater than current ulimit size, setting at MAX [%d] requests\n", t.Concurrency)
 	}
 	semaphore := make(chan struct{}, t.Concurrency)
 	for _, ports := range t.PortRange {
@@ -55,7 +58,7 @@ func (t *TCPScanner) Scan() {
 			go func(j int) {
 				semaphore <- struct{}{}
 				if t.IsOpen(j) {
-					fmt.Printf("Open %d\n", j)
+					zap.S().Debugf("Open %d\n", j)
 				}
 				func() { <-semaphore }()
 				wg.Done()
@@ -63,6 +66,7 @@ func (t *TCPScanner) Scan() {
 		}
 	}
 	wg.Wait()
+	zap.S().Infof("Open port: %+v\n", t.Headers)
 }
 
 func (t *TCPScanner) IsOpen(port int) bool {
@@ -71,16 +75,35 @@ func (t *TCPScanner) IsOpen(port int) bool {
 	var conn net.Conn
 
 	if tcpAddr, err = net.ResolveTCPAddr("tcp4", fmt.Sprintf("%s:%d", t.Host, port)); err != nil {
-		fmt.Println(err)
+		zap.S().Panic(err)
 		return false
 	}
 	if conn, err = net.DialTimeout("tcp", tcpAddr.String(), t.Timeout); err != nil {
 		if !strings.Contains(err.Error(), "connect: connection refused") {
-			fmt.Println(err)
+			zap.S().Panic(err)
 		}
 		return false
 	}
 	conn.Close()
-
+	t.Headers[port] = t.getHeaders(port)
 	return true
+}
+
+func (t *TCPScanner) getHeaders(port int) []string {
+	var resp *http.Response
+	var err error
+	var headers []string
+	if resp, err = http.Get(fmt.Sprintf("http://%s:%d", t.Host, port)); err != nil {
+		panic(err)
+	}
+	defer resp.Body.Close()
+
+	for k, v := range resp.Header {
+		if k == "Server" {
+			for i := range v {
+				headers = append(headers, v[i])
+			}
+		}
+	}
+	return headers
 }

@@ -8,6 +8,8 @@ import (
 
 	stringutils "github.com/alessiosavi/GoGPUtils/string"
 	datastructures "github.com/alessiosavi/GoTCPScanner/datastructures"
+	"go.uber.org/zap"
+	"go.uber.org/zap/zapcore"
 )
 
 // Created so that multiple inputs can be accecpted
@@ -46,8 +48,12 @@ func (i *portRangeFlag) Set(value string) error {
 func main() {
 
 	var tcpScanner datastructures.TCPScanner
-
 	var myFlags portRangeFlag
+
+	loggerMgr := initZapLog()
+	zap.ReplaceGlobals(loggerMgr)
+	defer loggerMgr.Sync() // flushes buffer, if any
+	log := loggerMgr.Sugar()
 
 	host := flag.String("host", "localhost", "Set the ip/hostname of the target")
 	port := flag.Int("port", -1, "Single port to scan")
@@ -71,8 +77,18 @@ func main() {
 		tcpScanner.AddPortRange(myFlags[i][0], myFlags[i][1])
 	}
 
-	tcpScanner.SetTimeout(500)
+	log.Infof("Starting scan target [%s] in port rage {%v}\n", tcpScanner.Host, tcpScanner.PortRange)
+	tcpScanner.SetTimeout(0)
 	tcpScanner.Concurrency = 8193
 
 	tcpScanner.Scan()
+}
+
+func initZapLog() *zap.Logger {
+	config := zap.NewDevelopmentConfig()
+	config.EncoderConfig.EncodeLevel = zapcore.CapitalColorLevelEncoder
+	config.EncoderConfig.TimeKey = "timestamp"
+	config.EncoderConfig.EncodeTime = zapcore.RFC3339NanoTimeEncoder
+	logger, _ := config.Build()
+	return logger
 }
