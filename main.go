@@ -1,13 +1,18 @@
 package main
 
 import (
+	"context"
+	"encoding/json"
+	"errors"
 	"flag"
 	"fmt"
+	"os"
 	"strconv"
 	"strings"
 
 	stringutils "github.com/alessiosavi/GoGPUtils/string"
 	datastructures "github.com/alessiosavi/GoTCPScanner/datastructures"
+	"github.com/aws/aws-lambda-go/lambda"
 	"go.uber.org/zap"
 	"go.uber.org/zap/zapcore"
 )
@@ -21,6 +26,44 @@ func (i *portRangeFlag) String() string {
 		sb.WriteString(fmt.Sprintf("%v", c))
 	}
 	return sb.String()
+}
+
+type InputRequest struct {
+	Ports       [][]int `json:"ports"`
+	Host        string  `json:"host"`
+	Port        int     `json:"port"`
+	Concurrency int     `json:"concurrency"`
+	Timeout     int     `json:"timeout"`
+}
+
+func HandleRequest(ctx context.Context, in InputRequest) (string, error) {
+	var tcpScanner datastructures.TCPScanner
+
+	if in.Port == 0 && len(in.Ports) == 0 {
+		return "", errors.New("port(s) not set")
+	}
+
+	if in.Port != 0 && len(in.Ports) != 0 {
+		return "", errors.New("set only port or ports")
+	}
+	if in.Port != 0 {
+		tcpScanner.PortRange = append(tcpScanner.PortRange, []int{0, in.Port})
+	} else {
+		tcpScanner.PortRange = in.Ports
+	}
+	if in.Concurrency < 1 {
+		in.Concurrency = 1
+	}
+
+	tcpScanner.Concurrency = in.Concurrency
+	tcpScanner.ShowProgress = false
+	tcpScanner.SetTimeout(in.Timeout)
+	tcpScanner.SetHost(in.Host)
+	log := initZapLog()
+	defer log.Sync()
+	tcpScanner.Scan()
+	result, _ := json.Marshal(tcpScanner)
+	return fmt.Sprintf("%s\n", string(result)), nil
 }
 
 func (i *portRangeFlag) Set(value string) error {
@@ -45,50 +88,71 @@ func (i *portRangeFlag) Set(value string) error {
 	return nil
 }
 
-func main() {
-
-	var tcpScanner datastructures.TCPScanner
+func consoleInput() datastructures.TCPScanner {
 	var myFlags portRangeFlag
-
-	loggerMgr := initZapLog()
-	zap.ReplaceGlobals(loggerMgr)
-	defer loggerMgr.Sync() // flushes buffer, if any
-	log := loggerMgr.Sugar()
 
 	host := flag.String("host", "localhost", "Set the ip/hostname of the target")
 	port := flag.Int("port", -1, "Single port to scan")
+	concurrency := flag.Int("thread", 100, "Number of concurrent thread for scan the target")
+	timeout := flag.Int("timeout", 2000, "Number to millisecond to wait before raise a timeout excpetion")
+
 	flag.Var(&myFlags, "ports", "start and stop port separated by -")
 	flag.Parse()
 
 	if stringutils.IsBlank(*host) {
 		panic("Empty hostname string")
 	}
-	tcpScanner.SetHost(*host)
 
 	if *port == -1 && len(myFlags) == 0 {
 		panic("You need to specify the start and stop port (--ports) or a single port (--port)")
 	}
 
 	if *port != -1 && len(myFlags) != 0 {
-		panic("You need to specify only one parameter related to port")
+		panic("You need to specify only one parameter related to the port to scan")
 	}
 
-	for i := range myFlags {
-		tcpScanner.AddPortRange(myFlags[i][0], myFlags[i][1])
+	var ports [][]int
+	if *port != -1 {
+		ports = append(ports, []int{-1, *port})
+	} else {
+		for i := range myFlags {
+			ports = append(ports, []int{myFlags[i][0], myFlags[i][1]})
+		}
 	}
 
-	log.Infof("Starting scan target [%s] in port rage {%v}\n", tcpScanner.Host, tcpScanner.PortRange)
-	tcpScanner.SetTimeout(3000)
-	tcpScanner.Concurrency = 300
+	tcpScanner := datastructures.TCPScanner{PortRange: ports, Concurrency: *concurrency, ShowProgress: true}
+	tcpScanner.SetHost(*host)
+	tcpScanner.SetTimeout(*timeout)
 
-	tcpScanner.Scan()
+	return tcpScanner
+
 }
 
-func initZapLog() *zap.Logger {
+func main() {
+
+	// Run the lambda
+	if stringutils.IsBlank(os.Getenv("console")) {
+		lambda.Start(HandleRequest)
+	} else { // Run in console
+		var tcpScanner datastructures.TCPScanner = consoleInput()
+		log := initZapLog()
+		defer log.Sync()
+
+		log.Infof("Starting scan target [%s] in port rage {%v}\n", tcpScanner.Host, tcpScanner.PortRange)
+		tcpScanner.Scan()
+		result, _ := json.Marshal(tcpScanner)
+
+		fmt.Printf("%s\n", string(result))
+	}
+}
+
+func initZapLog() *zap.SugaredLogger {
 	config := zap.NewDevelopmentConfig()
-	config.EncoderConfig.EncodeLevel = zapcore.CapitalColorLevelEncoder
+	// config.EncoderConfig.EncodeLevel = zapcore.CapitalColorLevelEncoder
 	config.EncoderConfig.TimeKey = "timestamp"
 	config.EncoderConfig.EncodeTime = zapcore.RFC3339NanoTimeEncoder
 	logger, _ := config.Build()
-	return logger
+
+	zap.ReplaceGlobals(logger)
+	return logger.Sugar()
 }

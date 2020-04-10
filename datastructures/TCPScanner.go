@@ -14,11 +14,12 @@ import (
 )
 
 type TCPScanner struct {
-	Host        string
-	PortRange   [][]int
-	Headers     map[int][]string
-	Concurrency int
-	Timeout     time.Duration
+	Host         string
+	PortRange    [][]int
+	Headers      map[int][]string
+	Concurrency  int
+	Timeout      time.Duration
+	ShowProgress bool
 }
 
 func (t *TCPScanner) SetHost(host string) {
@@ -54,8 +55,11 @@ func (t *TCPScanner) Scan() {
 	}
 	semaphore := make(chan struct{}, t.Concurrency)
 
+	var bar *pb.ProgressBar
 	// create and start new bar
-	bar := pb.Full.Start(getTotalPortCount(t.PortRange))
+	if t.ShowProgress {
+		bar = pb.Full.Start(getTotalPortCount(t.PortRange))
+	}
 
 	for _, ports := range t.PortRange {
 		for j := ports[0]; j < ports[1]; j++ {
@@ -67,12 +71,16 @@ func (t *TCPScanner) Scan() {
 				}
 				func() { <-semaphore }()
 				wg.Done()
-				bar.Increment()
+				if t.ShowProgress {
+					bar.Increment()
+				}
 			}(j)
 		}
 	}
 	wg.Wait()
-	bar.Finish()
+	if t.ShowProgress {
+		bar.Finish()
+	}
 
 	zap.S().Infof("Open port: %+v\n", t.Headers)
 }

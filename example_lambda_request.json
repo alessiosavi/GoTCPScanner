@@ -1,0 +1,15 @@
+{
+    "host": "localhost",
+    "ports": [
+        [
+            0,
+            7000
+        ],
+        [
+            7001,
+            65536
+        ]
+    ],
+    "concurrency": 300,
+    "timeout": 3000
+}
