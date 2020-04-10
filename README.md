@@ -35,7 +35,7 @@ if uint64(t.Concurrency) >= ulimitCurr {
 ### Run
 
 ```bash
-> ./GoTCPScanner -host localhost -ports 7000-9000 -ports 10000-11000
+> console=true ./GoTCPScanner -host localhost -ports 7000-9000 -ports 10000-11000
 ```
 
 ## Video
