@@ -6,6 +6,7 @@ import (
 	"errors"
 	"flag"
 	"fmt"
+	"log"
 	"os"
 	"strconv"
 	"strings"
@@ -93,7 +94,7 @@ func consoleInput() datastructures.TCPScanner {
 
 	host := flag.String("host", "localhost", "Set the ip/hostname of the target")
 	port := flag.Int("port", -1, "Single port to scan")
-	concurrency := flag.Int("thread", 100, "Number of concurrent thread for scan the target")
+	concurrency := flag.Int("thread", 8, "Number of concurrent thread for scan the target")
 	timeout := flag.Int("timeout", 2000, "Number to millisecond to wait before raise a timeout excpetion")
 
 	flag.Var(&myFlags, "ports", "start and stop port separated by -")
@@ -129,6 +130,8 @@ func consoleInput() datastructures.TCPScanner {
 }
 
 func main() {
+
+	log.SetFlags(log.Ldate | log.Lshortfile | log.LstdFlags | log.Lmicroseconds)
 
 	// Run the lambda
 	if stringutils.IsBlank(os.Getenv("console")) {

@@ -4,9 +4,9 @@ import (
 	"fmt"
 	"net"
 	"net/http"
+	"runtime"
 	"strings"
 	"sync"
-	"syscall"
 	"time"
 
 	"github.com/cheggaaa/pb/v3"
@@ -35,45 +35,34 @@ func (t *TCPScanner) AddPortRange(startPort, stopPort int) {
 	t.PortRange = append(t.PortRange, []int{startPort, stopPort})
 }
 
-// GetUlimitValue return the current and max value for ulimit
-func getUlimitValue() (uint64, uint64) {
-	var rLimit syscall.Rlimit
-	if err := syscall.Getrlimit(syscall.RLIMIT_NOFILE, &rLimit); err != nil {
-		panic(err)
-	}
-	return rLimit.Cur, rLimit.Max
-}
-
 func (t *TCPScanner) Scan() {
-
 	var wg sync.WaitGroup
-
-	ulimitCurr, _ := getUlimitValue()
-	if uint64(t.Concurrency) >= ulimitCurr {
-		t.Concurrency = int(float64(ulimitCurr) * 0.7)
+	ulimitCurr := runtime.NumCPU()
+	if t.Concurrency > ulimitCurr {
+		t.Concurrency = ulimitCurr
 		zap.S().Warnf("Provided a thread factor greater than current ulimit size, setting at MAX [%d] requests\n", t.Concurrency)
 	}
 	semaphore := make(chan struct{}, t.Concurrency)
-
 	var bar *pb.ProgressBar
 	// create and start new bar
 	if t.ShowProgress {
 		bar = pb.Full.Start(getTotalPortCount(t.PortRange))
 	}
-
 	for _, ports := range t.PortRange {
 		for j := ports[0]; j < ports[1]; j++ {
 			wg.Add(1)
-			go func(j int) {
+			go func(k int) {
 				semaphore <- struct{}{}
-				if t.IsOpen(j) {
-					zap.S().Debugf("Open %d\n", j)
-				}
-				func() { <-semaphore }()
-				wg.Done()
+				func() {
+					if t.IsOpen(k) {
+						zap.S().Debugf("Open %d\n", k)
+					}
+					<-semaphore
+				}()
 				if t.ShowProgress {
 					bar.Increment()
 				}
+				wg.Done()
 			}(j)
 		}
 	}
@@ -95,7 +84,7 @@ func (t *TCPScanner) IsOpen(port int) bool {
 	}
 	if conn, err = net.DialTimeout("tcp", tcpAddr.String(), t.Timeout); err != nil {
 		if !strings.Contains(err.Error(), "connect: connection refused") && !strings.Contains(err.Error(), "i/o timeout") {
-			zap.S().Panic(err)
+			zap.S().Error(err)
 		}
 		return false
 	}
