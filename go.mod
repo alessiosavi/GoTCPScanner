@@ -4,7 +4,7 @@ go 1.14
 
 require (
 	github.com/alessiosavi/GoGPUtils v0.0.30
-	github.com/aws/aws-lambda-go v1.22.0
+	github.com/aws/aws-lambda-go v1.23.0
 	github.com/cheggaaa/pb/v3 v3.0.5
 	github.com/fatih/color v1.10.0 // indirect
 	github.com/mattn/go-runewidth v0.0.10 // indirect
